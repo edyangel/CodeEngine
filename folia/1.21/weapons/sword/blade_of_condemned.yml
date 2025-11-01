@@ -9,6 +9,58 @@
 # - Combo system with boss bar
 # - Shadow step teleportation
 # ============================================
+#
+# ⚙️ CROSS-COMPATIBILITY: Paper & Folia
+# ============================================
+# This enchantment works on BOTH Paper and Folia without any modifications!
+# 
+# 🔧 AUTOMATIC ADAPTATIONS (handled by CodeEngine):
+# 
+# 1️⃣ SCHEDULER WRAPPER (SchedulerAdapter interface)
+#    ✅ scheduler.runEntityTask(entity, {...})           → Auto-detects environment
+#    ✅ scheduler.runEntityTaskLater(entity, {...}, 20L) → Region-based (Folia) or Global (Paper)
+#    ✅ scheduler.runEntityTaskTimer(...)                → Repeating tasks (both)
+#    ✅ scheduler.runRegionTask(location, {...})         → Chunk-safe operations
+#    ✅ scheduler.runRegionTaskLater(...)                → Delayed region tasks
+#    ✅ scheduler.runGlobalTask({...})                   → Server-wide tasks
+#    ✅ scheduler.runAsyncTask({...})                    → Async operations (both)
+#
+#    ❌ NEVER USE (breaks portability):
+#       Bukkit.getScheduler().runTask(...)               → Only Paper/Spigot
+#       entity.getScheduler().run(...)                   → Only Folia
+#       Bukkit.getScheduler().runTaskAsynchronously(...) → Not Folia-compatible
+#
+# 2️⃣ RESOURCE LOADING (ItemManager auto-detection)
+#    - Paper/Spigot: Loads from src/main/resources/
+#    - Folia: Loads from src/main/resources_folia/ (optimized versions)
+#    - Detection: SchedulerFactory.isFoliaServer()
+#    - Method: Checks for io.papermc.paper.threadedregions.RegionizedServer class
+#
+# 3️⃣ SCHEDULER DETECTION (SchedulerFactory.isFoliaServer())
+#    Method 1: Check for RegionizedServer class (Folia-specific)
+#    Method 2: Try calling Bukkit.getScheduler() - throws UnsupportedOperationException on Folia
+#    Result cached: Only detects once at startup for performance
+#
+# 4️⃣ IMPLEMENTATIONS:
+#    📁 BukkitSchedulerAdapter.java  → Paper/Spigot (global thread model)
+#       - runEntityTask() → Bukkit.getScheduler().runTask(plugin, task)
+#       - runRegionTask() → Same as runTask (no region concept in Paper)
+#    
+#    📁 FoliaSchedulerAdapter.java   → Folia (region-based threading)
+#       - runEntityTask() → entity.getScheduler().run(plugin, task, null)
+#       - runRegionTask() → location.getWorld().getRegionScheduler().run(plugin, task)
+#
+# 5️⃣ STORAGE MANAGER COMPATIBILITY
+#    - Uses async scheduler for file I/O operations
+#    - Paper: Bukkit.getScheduler().runTaskAsynchronously()
+#    - Folia: Bukkit.getAsyncScheduler().runNow()
+#    - Prevents blocking main thread on both platforms
+#
+# 📊 RESULT: Write once, deploy everywhere! 🚀
+#    - Same .yml file works on Paper AND Folia
+#    - No code changes needed when switching servers
+#    - Automatic optimization for each platform
+# ============================================
 
 # ============================================
 # 📋 CODING RULES & SYNTAX GUIDELINES
@@ -73,7 +125,34 @@
 #    - Inside code:/init: blocks, use Groovy comment syntax
 #    - Outside code blocks (in YAML), use # for comments
 #
-# 7️⃣ SCHEDULER: Use Folia-compatible scheduler methods ONLY
+# 7️⃣ EVENT REGISTRATION: CRITICAL - Use anonymous Listener object
+#    ✅ CORRECT:
+#      Bukkit.getPluginManager().registerEvents(new Listener() {
+#        @EventHandler
+#        void onPlayerMove(PlayerMoveEvent event) {
+#          // Your code here
+#        }
+#      }, plugin)
+#    
+#    ❌ WRONG (COMMON ERROR):
+#      Bukkit.getPluginManager().registerEvents(this, plugin)
+#      // ERROR: 'this' is NOT a Listener in Groovy scripts!
+#    
+#    WHY THIS MATTERS:
+#    - In Java classes: Can do "implements Listener" at class level
+#    - In Groovy scripts: Must create anonymous Listener object with "new Listener() { }"
+#    - The script 'this' is a binding object, NOT a class that implements Listener
+#    - registerEvents() signature: registerEvents(Listener listener, Plugin plugin)
+#    - If you use 'this', you'll get: "No signature of method... is applicable"
+#    
+#    EXAMPLE ERROR MESSAGE:
+#      "No signature of method: org.bukkit.plugin.SimplePluginManager.registerEvents()
+#       is applicable for argument types: (your_script_12345, CodeEngine)
+#       Possible solutions: registerEvents(org.bukkit.event.Listener, org.bukkit.plugin.Plugin)"
+#    
+#    SOLUTION: Always wrap @EventHandler methods inside new Listener() { }
+#
+# 8️⃣ SCHEDULER: Use Folia-compatible scheduler methods ONLY
 #    ✅ CORRECT:  scheduler.runEntityTask(player, { ... })
 #    ✅ CORRECT:  scheduler.runRegionTaskLater(location, { ... }, 20L)
 #    ✅ CORRECT:  scheduler.runGlobalTaskTimer({ ... }, 1L, 20L)
@@ -82,7 +161,7 @@
 #    - Always use Entity/Region/Global task methods for Folia compatibility
 #    - Timer periods are in ticks (20 ticks = 1 second)
 #
-# 8️⃣ LOGGER: Use plugin.logger for debugging, NOT System.out
+# 9️⃣ LOGGER: Use plugin.logger for debugging, NOT System.out
 #    ✅ CORRECT:  plugin.logger.info("Message")
 #    ✅ CORRECT:  plugin.logger.warning("Warning")
 #    ❌ WRONG:    System.out.println("Message")  (Anti-pattern, won't appear in logs)
@@ -90,20 +169,67 @@
 #    - 'plugin' is pre-injected by GroovyCompiler
 #    - Use color codes: §a (green), §c (red), §e (yellow) for visibility
 #
-# 9️⃣ PERSISTENT DATA: Use @Field for script-level variables
+# 🔟 PERSISTENT DATA: Use @Field for script-level variables
 #    ✅ CORRECT:  @Field def myMap = new HashMap<UUID, String>()
 #    ❌ WRONG:    def myMap = new HashMap<UUID, String>()  (not accessible in functions)
 #    - @Field makes variables accessible across all functions/closures
 #    - Without @Field, variables are local to init: block only
 #    - Use for HashMaps, Lists, or any shared state
 #
-# 🔟 NULL SAFETY: Always check for null before calling methods
+# 1️⃣1️⃣ NULL SAFETY: Always check for null before calling methods
 #    ✅ CORRECT:  if (item != null && item.hasItemMeta()) { ... }
 #    ✅ CORRECT:  def value = map.get(key)
 #                 if (value != null) { ... }
 #    ❌ WRONG:    item.hasItemMeta()  (NullPointerException if item is null)
 #    - Groovy's ?. operator: item?.hasItemMeta() (safe navigation)
 #    - Use try-catch for task cancellation: try { task.cancel() } catch (Exception e) {}
+#
+# 1️⃣2️⃣ ENCHANTMENT REGISTRATION: CRITICAL - Must register at init: start
+#    ✅ CORRECT (Place at the BEGINNING of init: section):
+#      init: |
+#        // STEP 1: REGISTER ENCHANTMENT (MANDATORY!)
+#        def itemManager = plugin.getItemManager()
+#        def ymlConfig = itemManager.getItemConfig("your_enchant_id")
+#        def enchantSection = ymlConfig.getConfigurationSection("enchant")
+#        def enchantMap = enchantSection.getValues(false)
+#        enchantmentManager.register(enchantMap, this, ymlConfig.getValues(false))
+#        
+#        // STEP 2: Your event handlers, functions, etc...
+#    
+#    ❌ WRONG (COMMON AI ERROR - forgetting registration):
+#      init: |
+#        // Directly starts with event handlers
+#        Bukkit.getPluginManager().registerEvents(new Listener() { ... }, plugin)
+#        // ERROR: Enchantment never registered, anvil shows "not found in manager!"
+#    
+#    WHY THIS MATTERS:
+#    - Without registration: Enchantment won't appear in /ce give enchants list
+#    - Without registration: Custom anvil system shows "§c[ANVIL] Enchantment not found in manager!"
+#    - The enchant: section defines properties, but register() activates it in the system
+#    - EnchantmentManager.register() creates the internal mapping for anvil/commands
+#    
+#    CRITICAL REQUIREMENTS:
+#    1. Call enchantmentManager.register() FIRST in init: (before any other code)
+#    2. Use correct enchant ID: itemManager.getItemConfig("must_match_id_field")
+#    3. Pass 'this' as second parameter (script binding reference)
+#    4. Call ONLY ONCE (multiple calls cause duplicate registration errors)
+#    
+#    EXAMPLE ERROR MESSAGE (when forgotten):
+#      "[14:32:15 INFO]: §c[ANVIL] Enchantment not found in manager!"
+#      "Player tries to apply enchantment → Red X button instead of green checkmark"
+#    
+#    AFFECTED SYSTEMS:
+#    - /ce give enchants <id> command → Returns null/error
+#    - Custom anvil GUI → Shows "not found" error
+#    - EnchantmentManager.hasEnchantment() → Always returns false
+#    
+#    COMMON AI MISTAKES (both Copilot & GPT):
+#    - ❌ Forgetting registration entirely (most common)
+#    - ❌ Placing registration AFTER event handlers (too late)
+#    - ❌ Using wrong enchant ID string (typo/mismatch)
+#    - ❌ Calling register() multiple times (causes conflicts)
+#    
+#    SOLUTION: Always copy the STEP 1 block above and modify the enchant ID
 #
 # ============================================
 

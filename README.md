@@ -20,8 +20,6 @@ codeengine-docs/
 │           └── sword/
 │               └── blade_of_condemned.yml
 ├── paper/ (coming soon)
-└── spigot/ (coming soon)
-```
 
 ## 🗡️ Available Documentation
 
