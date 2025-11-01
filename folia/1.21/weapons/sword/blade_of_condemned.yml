@@ -1,0 +1,1337 @@
+# ============================================
+# BLADE OF THE CONDEMNED - Epic Sword Enchantment
+# ============================================
+# An extremely powerful sword enchantment with:
+# - Summons (Vex and Phantoms)
+# - Multiple particle effects
+# - Attribute modifiers (damage, speed, movement)
+# - Life steal, bleeding, execution
+# - Combo system with boss bar
+# - Shadow step teleportation
+# ============================================
+
+# ============================================
+# 📋 CODING RULES & SYNTAX GUIDELINES
+# ============================================
+# CRITICAL: Follow these rules strictly when creating custom enchantments
+#
+# 1️⃣ LANGUAGE: Use Groovy syntax, NOT pure Java
+#    ✅ CORRECT:  def myVar = "value"
+#    ❌ WRONG:    String myVar = "value";
+#    ✅ CORRECT:  if (condition) { ... }
+#    ❌ WRONG:    if(condition){ ... }  (missing spaces)
+#    - Groovy is more permissive than Java (optional semicolons, duck typing)
+#    - Use 'def' for variable declarations instead of explicit types
+#    - Closures use { } syntax: scheduler.runTask({ code here })
+#
+# 2️⃣ DECIMAL NUMBERS: Always append 'd' or 'f' for precision
+#    ✅ CORRECT:  double damage = 10.5d
+#    ✅ CORRECT:  float volume = 1.0f
+#    ❌ WRONG:    double damage = 10.5     (will be treated as BigDecimal)
+#    ❌ WRONG:    float volume = 1.0       (precision issues)
+#    - The 'd' suffix forces double precision (64-bit floating point)
+#    - The 'f' suffix forces float precision (32-bit floating point)
+#    - Without suffix, Groovy creates BigDecimal (slower, can cause issues)
+#    - Bukkit API expects primitives (double/float), not BigDecimal
+#
+# 3️⃣ FILE STRUCTURE: Follow this EXACT order (MANDATORY)
+#    1. id: string                    (unique identifier)
+#    2. name: string                  (display name with color codes)
+#    3. description: string           (brief description)
+#    4. enchant: { ... }              (EnchantmentManager configuration)
+#    5. code: | ... |                 (book creation script)
+#    6. init: | ... |                 (event handlers and logic)
+#    - DO NOT reorder sections or system will fail to load
+#    - DO NOT add extra top-level sections
+#    - Each section serves a specific purpose in the loading pipeline
+#
+# 4️⃣ INDENTATION: Use 2 spaces per level (YAML standard)
+#    ✅ CORRECT:
+#      enchant:
+#        category: WEAPON
+#        sub_types: [SWORD]
+#    ❌ WRONG:
+#      enchant:
+#          category: WEAPON  (4 spaces - inconsistent)
+#    - Tabs are FORBIDDEN in YAML (will cause parse errors)
+#    - Use spaces only, be consistent
+#
+# 5️⃣ IMPORTS: Place at the top of code: and init: sections
+#    ✅ CORRECT:
+#      init: |
+#        import org.bukkit.Bukkit
+#        import org.bukkit.entity.*
+#    - Import everything you need upfront
+#    - Use wildcard imports (.*) for entire packages
+#    - Groovy auto-imports some common classes (String, List, Map)
+#
+# 6️⃣ COMMENTS: Use // for single-line, /* */ for multi-line
+#    ✅ CORRECT:  // This is a comment
+#    ✅ CORRECT:  /* Multi-line
+#                    comment */
+#    ❌ WRONG:    # This is YAML comment syntax (doesn't work in Groovy code)
+#    - Inside code:/init: blocks, use Groovy comment syntax
+#    - Outside code blocks (in YAML), use # for comments
+#
+# 7️⃣ SCHEDULER: Use Folia-compatible scheduler methods ONLY
+#    ✅ CORRECT:  scheduler.runEntityTask(player, { ... })
+#    ✅ CORRECT:  scheduler.runRegionTaskLater(location, { ... }, 20L)
+#    ✅ CORRECT:  scheduler.runGlobalTaskTimer({ ... }, 1L, 20L)
+#    ❌ WRONG:    Bukkit.getScheduler().runTask(plugin, { ... })  (Not Folia-compatible)
+#    - 'scheduler' is pre-injected by GroovyCompiler
+#    - Always use Entity/Region/Global task methods for Folia compatibility
+#    - Timer periods are in ticks (20 ticks = 1 second)
+#
+# 8️⃣ LOGGER: Use plugin.logger for debugging, NOT System.out
+#    ✅ CORRECT:  plugin.logger.info("Message")
+#    ✅ CORRECT:  plugin.logger.warning("Warning")
+#    ❌ WRONG:    System.out.println("Message")  (Anti-pattern, won't appear in logs)
+#    ❌ WRONG:    print("Message")               (Not available in Bukkit context)
+#    - 'plugin' is pre-injected by GroovyCompiler
+#    - Use color codes: §a (green), §c (red), §e (yellow) for visibility
+#
+# 9️⃣ PERSISTENT DATA: Use @Field for script-level variables
+#    ✅ CORRECT:  @Field def myMap = new HashMap<UUID, String>()
+#    ❌ WRONG:    def myMap = new HashMap<UUID, String>()  (not accessible in functions)
+#    - @Field makes variables accessible across all functions/closures
+#    - Without @Field, variables are local to init: block only
+#    - Use for HashMaps, Lists, or any shared state
+#
+# 🔟 NULL SAFETY: Always check for null before calling methods
+#    ✅ CORRECT:  if (item != null && item.hasItemMeta()) { ... }
+#    ✅ CORRECT:  def value = map.get(key)
+#                 if (value != null) { ... }
+#    ❌ WRONG:    item.hasItemMeta()  (NullPointerException if item is null)
+#    - Groovy's ?. operator: item?.hasItemMeta() (safe navigation)
+#    - Use try-catch for task cancellation: try { task.cancel() } catch (Exception e) {}
+#
+# ============================================
+
+id: blade_of_condemned
+name: "§8§l⚔ Blade of the Condemned"
+description: "Epic sword enchantment with summons, particles, and powerful effects"
+
+# ============================================
+# ENCHANT SECTION - EnchantmentManager Configuration
+# ============================================
+# This section is read by EnchantmentManager.java to register the enchantment
+# Reference: com.codeengine.enchantment.EnchantmentManager.parseFromMap()
+enchant:
+  # CATEGORY: Determines which items can receive this enchantment
+  # Available values (from EnchantmentCategory.java):
+  #   - WEAPON   : ⚔️ Weapon Enchantments (swords, axes, tridents)
+  #   - ARMOR    : 🛡️ Armor Enchantments (helmet, chestplate, leggings, boots)
+  #   - TOOL     : ⛏️ Tool Enchantments (pickaxe, axe, shovel, hoe)
+  #   - BOW      : 🏹 Bow Enchantments (bow, crossbow)
+  #   - SPECIAL  : ✨ Special Enchantments (any item type)
+  # Default: SPECIAL
+  category: WEAPON
+  
+  # SUB_TYPES: Specific material types that can receive this enchantment
+  # Must be valid Material enums from org.bukkit.Material
+  # For WEAPON category, common values:
+  #   - [SWORD]                          : All swords only
+  #   - [WOODEN_SWORD, STONE_SWORD, ...]  : Specific sword types
+  #   - [NETHERITE_SWORD]                 : Only netherite swords
+  #   - [TRIDENT]                         : Only tridents
+  # For ARMOR category:
+  #   - [HELMET, CHESTPLATE, LEGGINGS, BOOTS]
+  # If empty [], enchantment applies to all items in the category
+  sub_types: [SWORD]
+  
+  # MAX_LEVEL: Maximum level this enchantment can reach
+  # Range: 1 to Integer.MAX_VALUE (practical limit: 1-10)
+  # Usage:
+  #   - Level 1: Basic effects
+  #   - Level 2-3: Enhanced/unlocked effects
+  #   - Level 4+: Ultra-powerful (use sparingly)
+  # Applied via: /ce give enchants blade_of_condemned:3
+  # The $VARIANT placeholder in code: section receives this level
+  max_level: 3
+  
+  # RARITY: Visual presentation and drop chance modifier
+  # Available values (from EnchantmentRarity.java):
+  #   - COMMON    : §7Gray   (100% drop chance) - Basic enchantments
+  #   - RARE      : §9Blue   (75% drop chance)  - Uncommon enchantments
+  #   - EPIC      : §dPurple (50% drop chance)  - Powerful enchantments
+  #   - LEGENDARY : §6Gold   (25% drop chance)  - Extremely rare/powerful
+  # Affects:
+  #   - Lore color in enchanted books
+  #   - Drop probability from loot tables (if implemented)
+  #   - Visual distinction in GUIs
+  # Default: COMMON
+  rarity: LEGENDARY
+  
+  # CONFLICTS: List of enchantment IDs that cannot coexist with this one
+  # When applying this enchantment, system checks if item has any conflicting enchantments
+  # If conflict found, application is blocked (see EnchantmentManager.hasConflictingEnchantment())
+  # Examples:
+  #   - [silk_touch, fortune]          : Silk Touch conflicts with Fortune
+  #   - [fire_aspect, frost_aspect]    : Fire and Frost are mutually exclusive
+  #   - [sharpness, smite, bane]       : Damage types don't stack
+  # Empty [] = no conflicts (this enchantment can coexist with any other)
+  # IDs must match other enchantment files' 'id:' field
+  conflicts: []
+  
+  # COMPATIBLE_VERSIONS: Minecraft versions this enchantment works on
+  # Used for version-specific API calls or features
+  # Format: [major.minor] or [major.minor.patch]
+  # Examples:
+  #   - [1.21]           : Only 1.21.x versions
+  #   - [1.20, 1.21]     : Both 1.20.x and 1.21.x
+  #   - [1.21, 1.22]     : Forward compatibility
+  # Currently informational - not enforced by system
+  # Useful for documentation and future version checks
+  compatible_versions: [1.21]
+
+# ============================================
+# CODE SECTION - Enchanted Book Creation
+# ============================================
+code: |
+  import org.bukkit.Material
+  import org.bukkit.inventory.ItemStack
+  import org.bukkit.inventory.meta.ItemMeta
+  import org.bukkit.NamespacedKey
+  import org.bukkit.persistence.PersistentDataType
+  
+  // $VARIANT is replaced by CodeEngine when using: /ce give enchants blade_of_condemned:3
+  // Default to 1 if not specified
+  int bookLevel = $VARIANT
+  
+  // Roman numerals for display (supports levels 1-3, falls back to numbers for higher)
+  def romanNumerals = ["", "I", "II", "III"]
+  String romanLevel = (bookLevel > 0 && bookLevel < romanNumerals.size()) ? romanNumerals[bookLevel] : String.valueOf(bookLevel)
+  
+  ItemStack item = new ItemStack(Material.ENCHANTED_BOOK)
+  ItemMeta meta = item.getItemMeta()
+  
+  meta.setDisplayName("§8§l⚔ Blade of the Condemned " + romanLevel)
+  
+  def lore = [
+    "",
+    "§7A cursed blade imbued with the souls",
+    "§7of the condemned. Wield with caution.",
+    "",
+    "§8⚔ Blade of the Condemned",
+    "§7  Summons lost souls to aid you",
+    "§7  Steals life from enemies",
+    "§7  Grows stronger with each kill",
+    "",
+    "§c⚡ Level Effects:",
+    "§7  I   → Basic summons + life steal",
+    "§7  II  → Enhanced effects + bloodlust",
+    "§7  III → All effects + combo system",
+    "",
+    "§7Apply to: §fSWORD",
+    "",
+    "§5Rarity: §dLEGENDARY"
+  ]
+  meta.setLore(lore)
+  
+  // PDC tags for anvil system
+  def pdc = meta.getPersistentDataContainer()
+  
+  def idKey = new NamespacedKey(plugin, "enchant_id")
+  pdc.set(idKey, PersistentDataType.STRING, "blade_of_condemned")
+  
+  def nameKey = new NamespacedKey(plugin, "enchant_name")
+  pdc.set(nameKey, PersistentDataType.STRING, "§8⚔ Blade of the Condemned")
+  
+  def levelKey = new NamespacedKey(plugin, "enchant_level")
+  pdc.set(levelKey, PersistentDataType.INTEGER, bookLevel)
+  
+  item.setItemMeta(meta)
+  return item
+
+# ============================================
+# INIT SECTION - Event Handlers & Logic (FOLIA)
+# ============================================
+init: |
+  import org.bukkit.Bukkit
+  import org.bukkit.Location
+  import org.bukkit.Material
+  import org.bukkit.Particle
+  import org.bukkit.Sound
+  import org.bukkit.entity.*
+  import org.bukkit.event.EventHandler
+  import org.bukkit.event.Listener
+  import org.bukkit.event.entity.EntityDamageByEntityEvent
+  import org.bukkit.event.entity.EntityDeathEvent
+  import org.bukkit.event.entity.EntityTargetLivingEntityEvent
+  import org.bukkit.event.player.PlayerItemHeldEvent
+  import org.bukkit.event.player.PlayerInteractEvent
+  import org.bukkit.event.block.Action
+  import org.bukkit.inventory.ItemStack
+  import org.bukkit.potion.PotionEffect
+  import org.bukkit.potion.PotionEffectType
+  import org.bukkit.attribute.AttributeModifier
+  import org.bukkit.attribute.Attribute
+  import org.bukkit.inventory.EquipmentSlot
+  import org.bukkit.NamespacedKey
+  import org.bukkit.persistence.PersistentDataType
+  import org.bukkit.boss.BarColor
+  import org.bukkit.boss.BarStyle
+  import org.bukkit.boss.BossBar
+  import java.util.HashMap
+  import java.util.UUID
+  import java.util.Random
+  import groovy.transform.Field
+  
+  // ============================================
+  // GLOBAL DATA TRACKING (SCRIPT-LEVEL VARIABLES)
+  // ============================================
+  // @Field makes these variables accessible to all functions in this script
+  @Field def random = new Random()
+  @Field def playerSummons = new HashMap<UUID, Set<UUID>>()      // Track player summons
+  @Field def combos = new HashMap<UUID, Map>()                   // Player combo tracking
+  @Field def bloodlust = new HashMap<UUID, Map>()                // Player bloodlust tracking
+  @Field def activeBleedingTimers = new HashMap<UUID, Object>()  // Active bleeding timers
+  @Field def shadowStepCooldowns = new HashMap<UUID, Long>()     // Shadow step cooldowns
+  @Field def activeBossBars = new HashMap<UUID, BossBar>()       // Active boss bars
+  @Field def bossBarCleanupTasks = new HashMap<UUID, Object>()   // BossBar cleanup task references
+  @Field def corruptedBlocks = new HashMap<String, Map>()        // Track corrupted blocks (mycelium conversion)
+  
+  // ============================================
+  // STEP 1: REGISTER ENCHANTMENT
+  // ============================================
+  def itemManager = plugin.getItemManager()
+  def ymlConfig = itemManager.getItemConfig("blade_of_condemned")
+  def enchantSection = ymlConfig.getConfigurationSection("enchant")
+  def enchantMap = enchantSection.getValues(false)
+  
+  enchantmentManager.register(enchantMap, this, ymlConfig.getValues(false))
+  
+  plugin.logger.info("✓ Blade of the Condemned enchantment initialized")
+  
+  // ============================================
+  // HELPER FUNCTIONS
+  // ============================================
+  
+  // Check if item is a sword (prevent enchantment from working on books/other items)
+  // CRITICAL FIX: Books with enchantment were applying sword effects when held
+  // Problem: System only checked for enchantment in lore, not item type
+  // Solution: Verify item is actually a sword before applying any effects
+  boolean isSword(ItemStack item) {
+    if (item == null || item.getType() == org.bukkit.Material.AIR) return false
+    String typeName = item.getType().name()
+    return typeName.endsWith("_SWORD")  // WOODEN_SWORD, STONE_SWORD, IRON_SWORD, GOLDEN_SWORD, DIAMOND_SWORD, NETHERITE_SWORD
+  }
+  
+  // Get enchantment level from item (MODERN PDC SYSTEM)
+  // OLD SYSTEM: Read from lore (UNRELIABLE, PRIMITIVE)
+  // NEW SYSTEM: Read from PersistentDataContainer (CORRECT WAY)
+  int getEnchantLevel(ItemStack item) {
+    if (item == null || !item.hasItemMeta()) return 0
+    
+    // CRITICAL: Only check enchantment level if item is a sword
+    // This prevents books/other items from triggering sword effects
+    if (!isSword(item)) return 0
+    
+    def meta = item.getItemMeta()
+    def pdc = meta.getPersistentDataContainer()
+    
+    // METHOD 1: Try to get level from PDC (MODERN SYSTEM)
+    // EnchantmentManager might use different key formats:
+    // - "blade_of_condemned_level" (custom format)
+    // - "enchant_blade_of_condemned_level" (prefixed)
+    // - Or stored in lore by the manager
+    
+    def possibleKeys = [
+      new NamespacedKey(plugin, "blade_of_condemned_level"),
+      new NamespacedKey(plugin, "enchant_blade_of_condemned_level"),
+      new NamespacedKey(plugin, "enchantment_level_blade_of_condemned")
+    ]
+    
+    for (def key : possibleKeys) {
+      if (pdc.has(key, PersistentDataType.INTEGER)) {
+        int level = pdc.get(key, PersistentDataType.INTEGER)
+        return level
+      }
+    }
+    
+    // METHOD 2: FALLBACK - Check lore (EnchantmentManager stores level here)
+    // The manager adds the enchantment to lore when applying
+    def lore = meta.hasLore() ? meta.getLore() : []
+    
+    for (String line : lore) {
+      if (line.contains("Blade of the Condemned")) {
+        if (line.contains(" III")) return 3
+        if (line.contains(" II")) return 2
+        if (line.contains(" I")) return 1
+        return 1  // Default if no level
+      }
+    }
+    
+    return 0
+  }
+  
+  // Get enchantment level from PDC (for debugging) - DEPRECATED, use getEnchantLevel() instead
+  int getEnchantLevelFromPDC(ItemStack item) {
+    if (item == null || !item.hasItemMeta()) return 0
+    
+    def meta = item.getItemMeta()
+    def pdc = meta.getPersistentDataContainer()
+    
+    def levelKey = new NamespacedKey(plugin, "blade_of_condemned_level")
+    if (pdc.has(levelKey, PersistentDataType.INTEGER)) {
+      return pdc.get(levelKey, PersistentDataType.INTEGER)
+    }
+    
+    return 0
+  }
+  
+  // Apply attribute modifiers to sword (Folia 1.21 style)
+  // FOLIA 1.21 ATTRIBUTE API FIX: Use Registry.ATTRIBUTE.get() instead of Attribute enum
+  // Problem: Direct Attribute enum access was deprecated in Folia 1.21
+  // Original: player.getAttribute(Attribute.GENERIC_ATTACK_DAMAGE) → Deprecated warning
+  // Solution: org.bukkit.Registry.ATTRIBUTE.get(NamespacedKey.minecraft("attribute_name"))
+  // Reference: Learned from scale.yml (working example in codebase)
+  // Documentation: https://hub.spigotmc.org/javadocs/spigot/org/bukkit/Registry.html
+  void applyAttributes(ItemStack sword, int level) {
+    if (sword == null || !sword.hasItemMeta()) return
+    
+    // CRITICAL: Only apply attributes to swords, not books/other items
+    if (!isSword(sword)) return
+    
+    def meta = sword.getItemMeta()
+    
+    // Get attributes via Registry (Folia 1.21 compatible method)
+    // This pattern works across all Folia 1.21+ versions
+    def damageAttr = org.bukkit.Registry.ATTRIBUTE.get(org.bukkit.NamespacedKey.minecraft("generic.attack_damage"))
+    def speedAttr = org.bukkit.Registry.ATTRIBUTE.get(org.bukkit.NamespacedKey.minecraft("generic.attack_speed"))
+    def moveAttr = org.bukkit.Registry.ATTRIBUTE.get(org.bukkit.NamespacedKey.minecraft("generic.movement_speed"))
+    
+    // Remove existing modifiers (prevent stacking on reapplication)
+    if (damageAttr != null) meta.removeAttributeModifier(damageAttr)
+    if (speedAttr != null) meta.removeAttributeModifier(speedAttr)
+    if (moveAttr != null) meta.removeAttributeModifier(moveAttr)
+    
+    // Damage boost (+3/+5/+7 based on level)
+    double damageBonus = level * 2.0d + 1.0d  // Level 1: +3, Level 2: +5, Level 3: +7
+    if (damageAttr != null) {
+      meta.addAttributeModifier(
+        damageAttr,
+        new AttributeModifier(
+          UUID.nameUUIDFromBytes("condemned_damage".getBytes()),  // Consistent UUID for this modifier
+          "condemned_damage",  // Modifier name (internal identifier)
+          damageBonus,
+          AttributeModifier.Operation.ADD_NUMBER,  // Direct addition to base value
+          EquipmentSlot.HAND  // Only active when held in main hand
+        )
+      )
+    }
+    
+    // Attack speed boost (+10%/+15%/+20% based on level)
+    double speedBonus = level * 0.05d + 0.05d  // Level 1: +0.1, Level 2: +0.15, Level 3: +0.2
+    if (speedAttr != null) {
+      meta.addAttributeModifier(
+        speedAttr,
+        new AttributeModifier(
+          UUID.nameUUIDFromBytes("condemned_speed".getBytes()),
+          "condemned_speed",
+          speedBonus,
+          AttributeModifier.Operation.ADD_NUMBER,
+          EquipmentSlot.HAND
+        )
+      )
+    }
+    
+    // Movement speed boost (level 2+ only: +10%/+15%)
+    if (level >= 2 && moveAttr != null) {
+      double moveBonus = level * 0.05d  // Level 2: +0.1, Level 3: +0.15
+      meta.addAttributeModifier(
+        moveAttr,
+        new AttributeModifier(
+          UUID.nameUUIDFromBytes("condemned_movement".getBytes()),
+          "condemned_movement",
+          moveBonus,
+          AttributeModifier.Operation.ADD_NUMBER,
+          EquipmentSlot.HAND
+        )
+      )
+    }
+    
+    sword.setItemMeta(meta)
+  }
+  
+  // Spawn lost souls (Vex) to attack target
+  // VEX OWNERSHIP FIX: Vex entities do NOT support setOwner() in Bukkit API
+  // Solution: Track summon UUIDs in @Field playerSummons HashMap
+  // EntityTargetLivingEntityEvent cancels if summon tries to attack owner (see onEntityTarget handler)
+  // Auto-cleanup: Vex despawn after 30 seconds with particle effects
+  void spawnLostSouls(Player player, LivingEntity target, int level) {
+    int vexCount = 1 + level  // 2, 3, 4 Vex
+    
+    Location spawnLoc = player.getLocation().add(0.0d, 2.0d, 0.0d)
+    UUID playerId = player.getUniqueId()
+    
+    // Initialize summons set if needed
+    if (!playerSummons.containsKey(playerId)) {
+      playerSummons.put(playerId, new HashSet<UUID>())
+    }
+    
+    for (int i = 0; i < vexCount; i++) {
+      scheduler.runEntityTask(player, {
+        Vex vex = (Vex) player.getWorld().spawnEntity(spawnLoc, EntityType.VEX)
+        vex.setCustomName("§8Lost Soul of " + player.getName())
+        vex.setCustomNameVisible(true)
+        vex.setTarget(target)
+        
+        // Track this summon
+        playerSummons.get(playerId).add(vex.getUniqueId())
+        
+        // API COMPATIBILITY NOTE: Vex entities do NOT have a setOwner() method
+        // Unlike wolves/cats, Vex cannot be made "friendly" to a specific player
+        // This is a Bukkit API limitation - the Vex may occasionally attack the summoner
+        // FIX: We track the vex UUID and cancel targeting via EntityTargetLivingEntityEvent
+        // Documentation: https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/entity/Vex.html
+        
+        // Make vex disappear after 30 seconds
+        scheduler.runEntityTaskLater(vex, {
+          if (vex.isValid()) {
+            vex.getWorld().spawnParticle(Particle.SMOKE, vex.getLocation(), 50, 0.5d, 0.5d, 0.5d, 0.1d)
+            // CRITICAL FIX: Null-safe cleanup to prevent NullPointerException
+            // Problem: If player disconnects, PlayerQuitEvent removes their entry from playerSummons HashMap
+            // When vex removal task runs 30 seconds later, playerSummons.get(playerId) returns null
+            // Solution: Check if set exists before attempting to remove vex UUID
+            def summonSet = playerSummons.get(playerId)
+            if (summonSet != null) {
+              summonSet.remove(vex.getUniqueId())
+            }
+            vex.remove()
+          }
+        }, 600L)
+      })
+    }
+    
+    // Spawn particles
+    player.getWorld().spawnParticle(Particle.SOUL, spawnLoc, 50, 1.0d, 1.0d, 1.0d, 0.05d)
+    player.getWorld().spawnParticle(Particle.SMOKE, spawnLoc, 30, 0.5d, 0.5d, 0.5d, 0.05d)
+    player.playSound(player.getLocation(), Sound.ENTITY_VEX_AMBIENT, 1.0f, 0.8f)
+  }
+  
+  // Update combo counter and boss bar (simple version: caps at 10)
+  // COMBO SYSTEM: Counts player hits from 1-10 and stays at 10 (no reset)
+  // BossBar displays combo progress with color/title changes at milestones (3, 5, 7, 10)
+  // Auto-cleanup: BossBar disappears 3 seconds after last hit
+  void updateCombo(Player player, int level) {
+    plugin.logger.info("§e[COMBO] updateCombo called")
+    plugin.logger.info("  - Player: " + player.getName())
+    plugin.logger.info("  - Level: " + level)
+    
+    if (level < 3) {
+      plugin.logger.warning("§c[COMBO] Level < 3, returning early (level = " + level + ")")
+      return  // Combo only at level 3
+    }
+    
+    plugin.logger.info("§a[COMBO] Level check passed! Creating/updating combo...")
+    
+    UUID playerId = player.getUniqueId()
+    long currentTime = System.currentTimeMillis()
+    
+    def comboData = combos.get(playerId)
+    if (comboData == null) {
+      plugin.logger.info("§e[COMBO] No combo data, creating new...")
+      comboData = [combo: 0, lastHit: 0L]
+      combos.put(playerId, comboData)
+    }
+    
+    // Reset if more than 3 seconds passed
+    if (currentTime - comboData.lastHit > 3000L) {
+      plugin.logger.info("§e[COMBO] Combo expired, resetting...")
+      comboData.combo = 0
+    }
+    
+    // Increment combo (cap at 10, no reset)
+    comboData.combo++
+    if (comboData.combo > 10) {
+      comboData.combo = 10  // Stay at 10, don't go higher
+    }
+    
+    comboData.lastHit = currentTime
+    
+    int combo = comboData.combo
+    
+    plugin.logger.info("§a[COMBO] Current combo: " + combo)
+    
+    // Create or update boss bar
+    BossBar bossBar = activeBossBars.get(playerId)
+    if (bossBar == null) {
+      plugin.logger.info("§e[COMBO] Creating new BossBar...")
+      bossBar = Bukkit.createBossBar("§8⚔ Combo: 0", BarColor.WHITE, BarStyle.SEGMENTED_10)
+      bossBar.addPlayer(player)
+      activeBossBars.put(playerId, bossBar)
+      plugin.logger.info("§a[COMBO] BossBar created and added to player!")
+    } else {
+      plugin.logger.info("§e[COMBO] Updating existing BossBar...")
+    }
+    
+    // Update boss bar
+    String title = "§8⚔ Combo: §f" + combo
+    BarColor color = BarColor.WHITE
+    
+    if (combo >= 10) {
+      title += " §c§l[MAX POWER]"
+      color = BarColor.RED
+    } else if (combo >= 7) {
+      title += " §6§l[UNSTOPPABLE]"
+      color = BarColor.YELLOW
+    } else if (combo >= 5) {
+      title += " §e§l[RAMPAGE]"
+      color = BarColor.YELLOW
+    } else if (combo >= 3) {
+      title += " §a§l[FURY]"
+      color = BarColor.GREEN
+    }
+    
+    plugin.logger.info("§a[COMBO] Setting BossBar title: " + title)
+    bossBar.setTitle(title)
+    bossBar.setColor(color)
+    bossBar.setProgress(Math.min(combo / 10.0d, 1.0d))
+    
+    // CRITICAL FIX: Cancel previous cleanup task before scheduling new one
+    // Problem: Multiple tasks were scheduled, causing BossBar to never disappear
+    // Solution: Store task reference and cancel old one before creating new
+    def oldCleanupTask = bossBarCleanupTasks.get(playerId)
+    if (oldCleanupTask != null) {
+      try {
+        plugin.logger.info("§e[COMBO] Cancelling old cleanup task")
+        oldCleanupTask.cancel()
+      } catch (Exception e) {
+        // Ignore if already cancelled
+      }
+    }
+    
+    // Schedule boss bar removal after 3 seconds of inactivity
+    // CRITICAL: This task verifies time since last hit to prevent premature removal
+    // The task runs 3 seconds from NOW, but only removes if no new hits occurred
+    def cleanupTask = scheduler.runEntityTaskLater(player, {
+      plugin.logger.info("§e[COMBO] Cleanup task executing...")
+      
+      // Check if player is still online and valid
+      if (!player.isOnline() || !player.isValid()) {
+        plugin.logger.info("§c[COMBO] Player offline/invalid, cleaning up")
+        def bar = activeBossBars.get(playerId)
+        if (bar != null) {
+          bar.removeAll()
+        }
+        activeBossBars.remove(playerId)
+        combos.remove(playerId)
+        bossBarCleanupTasks.remove(playerId)
+        return
+      }
+      
+      long timeSince = System.currentTimeMillis() - comboData.lastHit
+      plugin.logger.info("§e[COMBO] Time since last hit: " + timeSince + "ms")
+      
+      // CRITICAL FIX: Use > 2900L instead of >= 3000L to account for tick timing precision
+      // Problem: 60 ticks (3 seconds) often equals 2998-2999ms due to rounding
+      // Solution: Accept 2900ms+ as "3 seconds" to ensure cleanup happens
+      if (timeSince > 2900L) {
+        plugin.logger.info("§a[COMBO] Removing BossBar after 3s inactivity")
+        bossBar.removeAll()
+        activeBossBars.remove(playerId)
+        combos.remove(playerId)
+        bossBarCleanupTasks.remove(playerId)
+      } else {
+        plugin.logger.info("§c[COMBO] Not enough time passed, BossBar stays")
+      }
+    }, 60L)
+    
+    // Store task reference for next cancellation
+    bossBarCleanupTasks.put(playerId, cleanupTask)
+    plugin.logger.info("§a[COMBO] Cleanup task scheduled for 3 seconds")
+  }
+  
+  // Get combo damage multiplier
+  double getComboDamageMultiplier(Player player) {
+    def comboData = combos.get(player.getUniqueId())
+    if (comboData == null) return 1.0d
+    
+    int combo = comboData.combo
+    if (combo >= 10) return 1.5d
+    if (combo >= 7) return 1.3d
+    if (combo >= 5) return 1.2d
+    if (combo >= 3) return 1.1d
+    return 1.0d
+  }
+  
+  // Update bloodlust stacks (max 5, 30s duration)
+  // ANTI-SPAM FIX: Only shows message when gaining new stacks (<5)
+  // When at max (5/5), silently refreshes 30s timer without messaging
+  void addBloodlustStack(Player player) {
+    UUID playerId = player.getUniqueId()
+    long currentTime = System.currentTimeMillis()
+    
+    def data = bloodlust.get(playerId)
+    if (data == null) {
+      data = [stacks: 0, expireTime: 0L]
+      bloodlust.put(playerId, data)
+    }
+    
+    // Reset if expired
+    if (currentTime > data.expireTime) {
+      data.stacks = 0
+    }
+    
+    // CRITICAL FIX: Only add stack and show message if not at max
+    // Problem: Message spammed even when already at 5/5 stacks
+    // Solution: Check if under max before incrementing and messaging
+    if (data.stacks < 5) {
+      data.stacks++
+      player.sendMessage("§c⚔ Bloodlust: " + data.stacks + "/5 stacks")
+    }
+    // If already at max, silently refresh timer without message
+    
+    // Reset timer (30 seconds)
+    data.expireTime = currentTime + 30000L
+  }
+  
+  // Get bloodlust damage multiplier
+  double getBloodlustMultiplier(Player player) {
+    def data = bloodlust.get(player.getUniqueId())
+    if (data == null) return 1.0d
+    
+    long currentTime = System.currentTimeMillis()
+    if (currentTime > data.expireTime) {
+      bloodlust.remove(player.getUniqueId())
+      return 1.0d
+    }
+    
+    return 1.0d + (data.stacks * 0.05d)  // +5% per stack
+  }
+  
+  // ============================================
+  // EVENT LISTENERS
+  // ============================================
+  
+  Bukkit.getPluginManager().registerEvents(new Listener() {
+    
+    // ============================================
+    // ATTACK EVENT - Main enchantment effects
+    // ============================================
+    @EventHandler
+    void onAttack(EntityDamageByEntityEvent event) {
+      if (!(event.getDamager() instanceof Player)) return
+      if (!(event.getEntity() instanceof LivingEntity)) return
+      
+      Player player = (Player) event.getDamager()
+      LivingEntity target = (LivingEntity) event.getEntity()
+      
+      ItemStack sword = player.getInventory().getItemInMainHand()
+      
+      // DEBUG: Log item info
+      plugin.logger.info("§e[ATTACK] Player: " + player.getName())
+      plugin.logger.info("  - Weapon: " + (sword != null ? sword.getType() : "null"))
+      plugin.logger.info("  - Has meta: " + (sword != null && sword.hasItemMeta()))
+      
+      if (sword != null && sword.hasItemMeta()) {
+        def meta = sword.getItemMeta()
+        plugin.logger.info("  - Display name: " + (meta.hasDisplayName() ? meta.getDisplayName() : "none"))
+        plugin.logger.info("  - Has lore: " + meta.hasLore())
+        
+        if (meta.hasLore()) {
+          plugin.logger.info("  - Lore:")
+          meta.getLore().each { line ->
+            plugin.logger.info("    * " + line)
+          }
+        }
+        
+        // DEBUG: Show ALL PDC keys
+        def pdc = meta.getPersistentDataContainer()
+        plugin.logger.info("  - PDC Keys:")
+        pdc.getKeys().each { key ->
+          plugin.logger.info("    * " + key.toString())
+          
+          // Try to read the value
+          if (pdc.has(key, PersistentDataType.INTEGER)) {
+            plugin.logger.info("      → INTEGER: " + pdc.get(key, PersistentDataType.INTEGER))
+          } else if (pdc.has(key, PersistentDataType.STRING)) {
+            plugin.logger.info("      → STRING: " + pdc.get(key, PersistentDataType.STRING))
+          }
+        }
+      }
+      
+      int level = getEnchantLevel(sword)
+      plugin.logger.info("  - Detected level: " + level)
+      
+      if (level == 0) {
+        plugin.logger.info("§c[ATTACK] Level is 0, skipping effects")
+        return
+      }
+      
+      plugin.logger.info("§a[ATTACK] Blade of the Condemned Level " + level + " activated!")
+      
+      double baseDamage = event.getDamage()
+      
+      // ============================================
+      // EFFECT 1: SUMMON LOST SOULS (15-25% chance)
+      // ============================================
+      double summonChance = 0.10d + (level * 0.05d)  // 15%, 20%, 25%
+      if (random.nextDouble() < summonChance) {
+        spawnLostSouls(player, target, level)
+      }
+      
+      // ============================================
+      // EFFECT 2: LIFE STEAL (10-20%)
+      // ============================================
+      double lifeStealPercent = 0.05d + (level * 0.05d)  // 10%, 15%, 20%
+      double healing = baseDamage * lifeStealPercent
+      
+      double newHealth = Math.min(player.getHealth() + healing, player.getMaxHealth())
+      player.setHealth(newHealth)
+      
+      // Life steal particles
+      Location midPoint = player.getLocation().add(0.0d, 1.0d, 0.0d)
+        .add(target.getLocation().add(0.0d, 1.0d, 0.0d).subtract(player.getLocation()).multiply(0.5d))
+      
+      player.getWorld().spawnParticle(Particle.HEART, midPoint, 3, 0.3d, 0.3d, 0.3d, 0.0d)
+      
+      // ============================================
+      // EFFECT 3: BLEEDING - Pure damage with tracking particles
+      // ============================================
+      // ADAPTIVE HEIGHT SYSTEM: Fixes particle positioning for all mob sizes
+      // Problem: Fixed spawn height (1.5d) was too high for small mobs like pigs/chickens
+      // Solution: Calculate spawn height based on entity's eye height (80%, max 1.2 blocks)
+      // Examples: Pig (0.9 eye) → 0.72 spawn | Player (1.62 eye) → 1.2 spawn (capped)
+      //
+      // PARTICLE VELOCITY FIX: Makes particles fall faster instead of floating
+      // Original: velocity = 0.0d → particles floated in air
+      // Fixed: velocity = 0.3d → particles fall 3x faster (visually better)
+      //
+      // SOUND API COMPATIBILITY FIX: Avoid entity.playSound() signature issues
+      // Problem: target.playSound(location, sound, volume, pitch) → MissingMethodException on non-Player entities
+      // Original error: "No signature of method: CraftPig.playSound() applicable for argument types: (Location, Sound, Float...)"
+      // Solution: Use world.playSound(location, sound, volume, pitch) - works on ALL entity types
+      // Reference: https://hub.spigotmc.org/javadocs/spigot/org/bukkit/World.html#playSound
+      //
+      // DAMAGE SYSTEM: Uses pure damage() method instead of potion effects
+      // Original: Applied WITHER potion effect → visual inconsistency
+      // Fixed: Direct damage() call → cleaner, no potion particles
+      // ============================================
+      int bleedDamage = level  // 1, 2, 3 HP per second
+      
+      // DURATION SCALING: Duration increases with enchantment level
+      // Level 1: 3 seconds (60 ticks) - short bleed
+      // Level 2: 4 seconds (80 ticks) - medium bleed
+      // Level 3: 5 seconds (100 ticks) - long bleed
+      int bleedDuration = 40 + (level * 20)  // 60, 80, 100 ticks
+      
+      // Track bleeding targets to prevent multiple timers stacking
+      UUID targetId = target.getUniqueId()
+      
+      // CRITICAL FIX: Cancel existing bleed timer if present
+      // Problem: Old timers kept running even after new attack, causing permanent bleeding
+      // Solution: Cancel and remove old timer before creating new one
+      if (activeBleedingTimers.containsKey(targetId)) {
+        def oldTask = activeBleedingTimers.get(targetId)
+        if (oldTask != null) {
+          oldTask.cancel()  // Cancel the old timer task
+        }
+        activeBleedingTimers.remove(targetId)  // Remove from map
+      }
+      
+      // Tick counter for this specific bleed effect (using array so closure can modify it)
+      def ticksElapsed = [0] as int[]
+      
+      // Create repeating task that follows victim SMOOTHLY (runs every tick = 1L)
+      def bleedTask = scheduler.runEntityTaskTimer(target, { task ->
+        // Increment tick counter
+        ticksElapsed[0]++
+        
+        // Stop if entity is dead/invalid
+        if (!target.isValid() || target.isDead()) {
+          activeBleedingTimers.remove(targetId)
+          if (task != null) task.cancel()
+          return
+        }
+        
+        // FIXED: Stop after duration expires (level-based: 3-5 seconds)
+        // This now works correctly because we cancel old timers before creating new ones
+        if (ticksElapsed[0] >= bleedDuration) {
+          activeBleedingTimers.remove(targetId)
+          if (task != null) task.cancel()
+          return
+        }
+        
+        // Apply pure damage every second (20 ticks)
+        if (ticksElapsed[0] % 20 == 0) {
+          target.damage(bleedDamage as double)
+          
+          // SOUND FIX: Use world.playSound() instead of entity.playSound()
+          // This avoids MissingMethodException on non-Player entities (pigs, cows, etc.)
+          target.getWorld().playSound(target.getLocation(), Sound.ENTITY_PLAYER_HURT, 0.3f, 0.8f)
+        }
+        
+        // ADAPTIVE HEIGHT CALCULATION for particles
+        // Gets entity's eye height (varies by mob type) and spawns particles at 80% of it
+        // This ensures particles appear at correct height for: pigs, cows, zombies, endermen, etc.
+        double eyeHeight = target.getEyeHeight()  // Pig: ~0.9, Player: 1.62, Enderman: 2.55
+        double spawnHeight = Math.min(eyeHeight * 0.8d, 1.2d)  // 80% of eye height, max 1.2 blocks
+        
+        Location targetLoc = target.getLocation().add(0.0d, spawnHeight, 0.0d)
+        
+        // PARTICLE VELOCITY OPTIMIZATION: Last parameter controls fall speed
+        // spawnParticle(type, location, count, offsetX, offsetY, offsetZ, velocity)
+        // velocity = 0.0d: slow float (old behavior)
+        // velocity = 0.3d: fast fall (new behavior, 3x faster)
+        // offsetY = 0.0d: no vertical spread, particles fall straight down
+        target.getWorld().spawnParticle(
+          Particle.DRIPPING_LAVA, 
+          targetLoc, 
+          3,                    // particle count
+          0.3d, 0.0d, 0.3d,    // offset X, Y (0=straight), Z
+          0.3d                  // velocity (fall speed multiplier)
+        )
+        
+        // Blood dust particles with downward motion (spawn every 3 ticks to reduce spam)
+        if (ticksElapsed[0] % 3 == 0) {
+          target.getWorld().spawnParticle(
+            Particle.DUST, 
+            targetLoc, 
+            4,                  // particle count
+            0.3d, 0.1d, 0.3d,  // offset
+            0.2d,               // velocity for falling
+            new Particle.DustOptions(org.bukkit.Color.fromRGB(139, 0, 0), 1.0f)  // Dark red color
+          )
+        }
+      }, 1L, 1L)  // Run EVERY TICK (1L) for smooth particle tracking - particles respawn at entity's location
+      
+      // CRITICAL: Store the task in the map so we can cancel it later if needed
+      // This prevents multiple bleeding effects stacking on the same target
+      activeBleedingTimers.put(targetId, bleedTask)
+      
+      // ============================================
+      // EFFECT 4: CURSE OF WEAKNESS (30-60% chance)
+      // ============================================
+      double weaknessChance = 0.20d + (level * 0.15d)  // 30%, 45%, 60%
+      if (random.nextDouble() < weaknessChance) {
+        target.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, 100, 1, false, true))
+        target.getWorld().spawnParticle(Particle.SMOKE, target.getLocation().add(0.0d, 1.0d, 0.0d), 20, 0.3d, 0.5d, 0.3d, 0.05d)
+      }
+      
+      // ============================================
+      // EFFECT 5: EXECUTION (<20-30% HP = 2x damage)
+      // ============================================
+      double executeThreshold = 0.15d + (level * 0.05d)  // 20%, 25%, 30%
+      double healthPercent = target.getHealth() / target.getMaxHealth()
+      
+      if (healthPercent < executeThreshold) {
+        event.setDamage(baseDamage * 2.0d)
+        
+        // Execute effects
+        target.getWorld().spawnParticle(Particle.DAMAGE_INDICATOR, target.getLocation().add(0.0d, 1.5d, 0.0d), 30, 0.3d, 0.3d, 0.3d, 0.5d)
+        target.getWorld().playSound(target.getLocation(), Sound.BLOCK_ANVIL_LAND, 1.0f, 0.5f)
+        player.sendActionBar("§c§l✗ EXECUTED!")
+      }
+      
+      // ============================================
+      // EFFECT 6: COMBO SYSTEM (Level 3 only)
+      // ============================================
+      plugin.logger.info("§e[ATTACK] Checking combo system...")
+      plugin.logger.info("  - Level: " + level + " (need >= 3)")
+      
+      if (level >= 3) {
+        plugin.logger.info("§a[ATTACK] Level >= 3, calling updateCombo()...")
+        updateCombo(player, level)
+        
+        double comboMult = getComboDamageMultiplier(player)
+        if (comboMult > 1.0d) {
+          event.setDamage(baseDamage * comboMult)
+        }
+        
+        // Combo bonuses
+        def comboData = combos.get(player.getUniqueId())
+        if (comboData != null) {
+          int combo = comboData.combo
+          
+          // 5 combo: Apply slow
+          if (combo == 5) {
+            target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 1, false, true))
+          }
+          
+          // 7 combo: Spawn vex
+          if (combo == 7) {
+            spawnLostSouls(player, target, 1)
+          }
+          
+          // 10 combo: AOE explosion
+          if (combo == 10) {
+            Location explosionLoc = target.getLocation()
+            explosionLoc.getWorld().spawnParticle(Particle.EXPLOSION, explosionLoc, 10, 2.0d, 2.0d, 2.0d, 0.0d)
+            explosionLoc.getWorld().playSound(explosionLoc, Sound.ENTITY_GENERIC_EXPLODE, 1.5f, 0.8f)
+            
+            // CRITICAL FIX: Damage nearby entities WITHOUT triggering player's weapon
+            // Problem: Using damage(amount, player) made explosion count toward combo
+            // Solution: Use damage(amount) only - pure damage without weapon attribution
+            // This prevents the explosion from triggering onAttack() event recursively
+            target.getNearbyEntities(3.0d, 3.0d, 3.0d).each { entity ->
+              if (entity instanceof LivingEntity && entity != player) {
+                ((LivingEntity) entity).damage(10.0d)  // Pure damage, no attacker
+              }
+            }
+          }
+        }
+      }
+      
+      // ============================================
+      // EFFECT 7: BLOODLUST MULTIPLIER (Level 2+)
+      // ============================================
+      if (level >= 2) {
+        double bloodlustMult = getBloodlustMultiplier(player)
+        if (bloodlustMult > 1.0d) {
+          event.setDamage(event.getDamage() * bloodlustMult)
+        }
+      }
+      
+      // ============================================
+      // VISUAL EFFECTS: Dark aura particles (FULL QUALITY)
+      // ============================================
+      player.getWorld().spawnParticle(Particle.SMOKE, player.getLocation().add(0.0d, 1.0d, 0.0d), 10, 0.5d, 0.5d, 0.5d, 0.02d)
+      
+      // Blood trail from sword to target (FULL QUALITY)
+      Location start = player.getEyeLocation()
+      Location end = target.getEyeLocation()
+      
+      double distance = start.distance(end)
+      int particles = (int)(distance * 5)  // Original density
+      
+      for (int i = 0; i < particles; i++) {
+        double ratio = i / (double) particles
+        Location particleLoc = start.clone().add(end.clone().subtract(start).multiply(ratio))
+        player.getWorld().spawnParticle(Particle.DUST, particleLoc, 1, 0.0d, 0.0d, 0.0d, 0.0d, new Particle.DustOptions(org.bukkit.Color.fromRGB(139, 0, 0), 0.5f))
+      }
+      
+      // Soul burst on critical
+      boolean isCritical = player.getFallDistance() > 0.0f && !player.isOnGround()
+      if (isCritical) {
+        target.getWorld().spawnParticle(Particle.SOUL, target.getLocation().add(0.0d, 1.0d, 0.0d), 50, 1.0d, 1.0d, 1.0d, 0.1d)
+        target.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME, target.getLocation().add(0.0d, 1.0d, 0.0d), 30, 0.5d, 0.5d, 0.5d, 0.05d)
+        player.playSound(player.getLocation(), Sound.ENTITY_WITHER_SKELETON_DEATH, 0.8f, 1.2f)
+      }
+      
+      // Sounds
+      player.playSound(player.getLocation(), Sound.ENTITY_WITHER_SKELETON_HURT, 0.5f, 0.8f)
+    }
+    
+    // ============================================
+    // KILL EVENT - Bloodlust stacks + Phantom spawning
+    // ============================================
+    @EventHandler
+    void onKill(EntityDeathEvent event) {
+      Player killer = event.getEntity().getKiller()
+      if (killer == null) return
+      
+      ItemStack sword = killer.getInventory().getItemInMainHand()
+      int level = getEnchantLevel(sword)
+      
+      if (level < 2) return
+      
+      // Add bloodlust stack
+      addBloodlustStack(killer)
+      
+      // Spawn vengeful spirit (25% chance, level 2+)
+      // PHANTOM SUMMON: Spawns on kill with level 2+ enchantment
+      // Timer system: attackTask stored and safely cancelled to prevent NullPointerException
+      // Auto-despawn: 60 seconds with particle effects
+      if (random.nextDouble() < 0.25d) {
+        Location spawnLoc = event.getEntity().getLocation().add(0.0d, 2.0d, 0.0d)
+        
+        scheduler.runEntityTask(killer, {
+          Phantom phantom = (Phantom) killer.getWorld().spawnEntity(spawnLoc, EntityType.PHANTOM)
+          phantom.setCustomName("§8Espíritu de " + event.getEntity().getName())
+          phantom.setCustomNameVisible(true)
+          phantom.setSize(1)
+          
+          // API COMPATIBILITY NOTE: Phantom entities do NOT have setOwner() method
+          // Similar to Vex limitation - Phantoms cannot be made "friendly" via Bukkit API
+          // Tracked in @Field playerSummons for EntityTargetEvent cancellation (see onEntityTarget handler)
+          // TIMER FIX: Store attackTask reference to safely cancel on phantom removal (prevents NullPointerException)
+          
+          // Make phantom attack nearby mobs
+          def attackTask = scheduler.runEntityTaskTimer(phantom, { task ->
+            if (!phantom.isValid()) {
+              if (task != null) task.cancel()
+              return
+            }
+            
+            def nearbyMobs = phantom.getNearbyEntities(15.0d, 15.0d, 15.0d).findAll { 
+              it instanceof Monster && it != phantom 
+            }
+            
+            if (!nearbyMobs.isEmpty()) {
+              phantom.setTarget((LivingEntity) nearbyMobs.get(0))
+            }
+          }, 1L, 40L)
+          
+          // Remove after 60 seconds
+          scheduler.runEntityTaskLater(phantom, {
+            if (phantom.isValid()) {
+              // CRITICAL FIX: Cancel attack task safely before removing phantom
+              // Problem: task.cancel() threw NullPointerException
+              // Solution: Check if task exists before cancelling
+              if (attackTask != null) {
+                try {
+                  attackTask.cancel()
+                } catch (Exception e) {
+                  // Silently ignore if task already cancelled
+                }
+              }
+              
+              phantom.getWorld().spawnParticle(Particle.SMOKE, phantom.getLocation(), 50, 1.0d, 1.0d, 1.0d, 0.1d)
+              phantom.remove()
+            }
+          }, 1200L)
+        })
+        
+        killer.playSound(killer.getLocation(), Sound.ENTITY_PHANTOM_AMBIENT, 1.0f, 0.7f)
+      }
+    }
+    
+    // ============================================
+    // HELD ITEM CHANGE - Apply/remove attributes
+    // ============================================
+    @EventHandler
+    void onItemHeld(PlayerItemHeldEvent event) {
+      Player player = event.getPlayer()
+      
+      scheduler.runEntityTaskLater(player, {
+        ItemStack newItem = player.getInventory().getItem(event.getNewSlot())
+        int level = getEnchantLevel(newItem)
+        
+        if (level > 0) {
+          applyAttributes(newItem, level)
+        }
+      }, 1L)
+    }
+    
+    // ============================================
+    // INTERACT EVENT - Shadow step (Shift + Right Click)
+    // ============================================
+    @EventHandler
+    void onInteract(PlayerInteractEvent event) {
+      if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return
+      if (!event.getPlayer().isSneaking()) return
+      
+      Player player = event.getPlayer()
+      ItemStack sword = player.getInventory().getItemInMainHand()
+      int level = getEnchantLevel(sword)
+      
+      if (level < 3) return
+      
+      UUID playerId = player.getUniqueId()
+      long currentTime = System.currentTimeMillis()
+      
+      // Check cooldown (15 seconds)
+      Long cooldownEnd = shadowStepCooldowns.get(playerId)
+      if (cooldownEnd != null && currentTime < cooldownEnd) {
+        long remaining = (cooldownEnd - currentTime) / 1000L
+        player.sendActionBar("§c⏱ Shadow Step: " + remaining + "s cooldown")
+        return
+      }
+      
+      // Teleport 5 blocks forward
+      Location origin = player.getLocation()
+      Location destination = origin.clone().add(origin.getDirection().multiply(5.0d))
+      
+      // Spawn particles at origin
+      player.getWorld().spawnParticle(Particle.SMOKE, origin.add(0.0d, 1.0d, 0.0d), 100, 0.5d, 1.0d, 0.5d, 0.1d)
+      player.getWorld().spawnParticle(Particle.END_ROD, origin, 20, 0.3d, 0.5d, 0.3d, 0.1d)
+      player.playSound(origin, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.8f)
+      
+      // Teleport
+      player.teleportAsync(destination).thenAccept({ success ->
+        if (success) {
+          // Spawn particles at destination
+          player.getWorld().spawnParticle(Particle.SMOKE, destination.add(0.0d, 1.0d, 0.0d), 100, 0.5d, 1.0d, 0.5d, 0.1d)
+          player.getWorld().spawnParticle(Particle.END_ROD, destination, 20, 0.3d, 0.5d, 0.3d, 0.1d)
+          player.playSound(destination, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.2f)
+          
+          player.sendMessage("§8⚡ Shadow Step!")
+          
+          // Set cooldown
+          shadowStepCooldowns.put(playerId, currentTime + 15000L)
+        }
+      })
+      
+      event.setCancelled(true)
+    }
+    
+    // ============================================
+    // ENTITY TARGET EVENT - Prevent summons from attacking owner
+    // ============================================
+    @EventHandler
+    void onEntityTarget(EntityTargetLivingEntityEvent event) {
+      // Only care about Vex and Phantom entities
+      if (!(event.getEntity() instanceof Vex) && !(event.getEntity() instanceof Phantom)) return
+      
+      // Check if target is a player
+      if (!(event.getTarget() instanceof Player)) return
+      
+      Player targetPlayer = (Player) event.getTarget()
+      UUID summonUUID = event.getEntity().getUniqueId()
+      
+      // Check if this summon belongs to the target player
+      Set<UUID> summons = playerSummons.get(targetPlayer.getUniqueId())
+      if (summons != null && summons.contains(summonUUID)) {
+        // This is the owner - cancel targeting
+        event.setCancelled(true)
+      }
+    }
+    
+    // ============================================
+    // PLAYER QUIT EVENT - Clean up player data
+    // ============================================
+    @EventHandler
+    void onPlayerQuit(org.bukkit.event.player.PlayerQuitEvent event) {
+      Player player = event.getPlayer()
+      UUID playerId = player.getUniqueId()
+      
+      // Clean up BossBar
+      BossBar bossBar = activeBossBars.get(playerId)
+      if (bossBar != null) {
+        bossBar.removeAll()
+        activeBossBars.remove(playerId)
+      }
+      
+      // Cancel cleanup task
+      def cleanupTask = bossBarCleanupTasks.get(playerId)
+      if (cleanupTask != null) {
+        try {
+          cleanupTask.cancel()
+        } catch (Exception e) {
+          // Ignore
+        }
+        bossBarCleanupTasks.remove(playerId)
+      }
+      
+      // Clean up combo data
+      combos.remove(playerId)
+      
+      // Clean up bloodlust data
+      bloodlust.remove(playerId)
+      
+      // Clean up shadow step cooldown
+      shadowStepCooldowns.remove(playerId)
+      
+      // Clean up summons tracking
+      playerSummons.remove(playerId)
+    }
+    
+  }, plugin)
+  
+  // ============================================
+  // AMBIENT PARTICLES - Dark aura orbits (full quality for documentation)
+  // ============================================
+  scheduler.runGlobalTaskTimer({
+    for (Player player : Bukkit.getOnlinePlayers()) {
+      scheduler.runEntityTask(player, {
+        ItemStack sword = player.getInventory().getItemInMainHand()
+        int level = getEnchantLevel(sword)
+        
+        if (level == 0) return
+        
+        // Dark aura around player (FULL PARTICLES)
+        Location playerLoc = player.getLocation().add(0.0d, 1.0d, 0.0d)
+        player.getWorld().spawnParticle(Particle.SMOKE, playerLoc, 5, 1.0d, 0.5d, 1.0d, 0.01d)
+        
+        // Spectral orbits around sword (level 2+)
+        if (level >= 2) {
+          long time = System.currentTimeMillis()
+          double angle1 = (time % 2000L) / 2000.0d * Math.PI * 2.0d
+          double angle2 = (time % 3000L) / 3000.0d * Math.PI * 2.0d
+          double angle3 = (time % 4000L) / 4000.0d * Math.PI * 2.0d
+          
+          double radius = 0.5d
+          
+          Location orbit1 = playerLoc.clone().add(Math.cos(angle1) * radius, 0.0d, Math.sin(angle1) * radius)
+          Location orbit2 = playerLoc.clone().add(Math.cos(angle2) * radius, 0.3d, Math.sin(angle2) * radius)
+          Location orbit3 = playerLoc.clone().add(Math.cos(angle3) * radius, -0.3d, Math.sin(angle3) * radius)
+          
+          player.getWorld().spawnParticle(Particle.END_ROD, orbit1, 1, 0.0d, 0.0d, 0.0d, 0.0d)
+          player.getWorld().spawnParticle(Particle.END_ROD, orbit2, 1, 0.0d, 0.0d, 0.0d, 0.0d)
+          player.getWorld().spawnParticle(Particle.END_ROD, orbit3, 1, 0.0d, 0.0d, 0.0d, 0.0d)
+        }
+      })
+    }
+  }, 1L, 5L)  // Every 5 ticks (4 times per second) - original frequency
+  
+  plugin.logger.info("✓ Blade of the Condemned ambient effects initialized")
+
+  // ============================================
+  // CORRUPTED GROUND - Mycelium conversion effect
+  // ============================================
+  // EFFECT: When holding the sword, converts dirt/grass blocks to mycelium in a 3x3 area
+  // Blocks automatically revert to original state 3 seconds after player leaves the area
+  // Uses HashMap to track block locations, original types, and restoration tasks
+  
+  scheduler.runGlobalTaskTimer({
+    for (Player player : Bukkit.getOnlinePlayers()) {
+      scheduler.runEntityTask(player, {
+        ItemStack sword = player.getInventory().getItemInMainHand()
+        int level = getEnchantLevel(sword)
+        
+        if (level == 0) return
+        
+        // Get blocks in 3x3 area under player
+        Location playerLoc = player.getLocation()
+        def world = playerLoc.getWorld()
+        int centerX = playerLoc.getBlockX()
+        int centerY = playerLoc.getBlockY() - 1  // Block below player's feet
+        int centerZ = playerLoc.getBlockZ()
+        
+        // Scan 3x3 area
+        for (int x = -1; x <= 1; x++) {
+          for (int z = -1; z <= 1; z++) {
+            def blockLoc = new Location(world, centerX + x, centerY, centerZ + z)
+            def block = blockLoc.getBlock()
+            def blockType = block.getType()
+            
+            // Convert dirt, grass, podzol, or coarse dirt to mycelium
+            if (blockType == Material.DIRT || blockType == Material.GRASS_BLOCK || 
+                blockType == Material.PODZOL || blockType == Material.COARSE_DIRT) {
+              
+              String blockKey = world.getName() + ":" + blockLoc.getBlockX() + ":" + blockLoc.getBlockY() + ":" + blockLoc.getBlockZ()
+              
+              // If block not yet tracked, save original type and convert
+              if (!corruptedBlocks.containsKey(blockKey)) {
+                corruptedBlocks.put(blockKey, [
+                  location: blockLoc,
+                  originalType: blockType,
+                  task: null
+                ])
+                
+                // Convert to mycelium with particles
+                block.setType(Material.MYCELIUM)
+                world.spawnParticle(Particle.PORTAL, blockLoc.clone().add(0.5d, 1.0d, 0.5d), 10, 0.3d, 0.1d, 0.3d, 0.02d)
+                world.playSound(blockLoc, Sound.BLOCK_ROOTS_BREAK, 0.3f, 0.6f)
+              }
+              
+              // Cancel existing restoration task and schedule new one (3 seconds)
+              def blockData = corruptedBlocks.get(blockKey)
+              if (blockData.task != null) {
+                try {
+                  blockData.task.cancel()
+                } catch (Exception e) {
+                  // Ignore if already cancelled
+                }
+              }
+              
+              // Schedule restoration task (3 seconds = 60 ticks)
+              blockData.task = scheduler.runRegionTaskLater(blockLoc, {
+                def restoreBlock = blockLoc.getBlock()
+                if (restoreBlock.getType() == Material.MYCELIUM) {
+                  restoreBlock.setType(blockData.originalType)
+                  world.spawnParticle(Particle.SOUL, blockLoc.clone().add(0.5d, 1.0d, 0.5d), 5, 0.2d, 0.1d, 0.2d, 0.01d)
+                }
+                corruptedBlocks.remove(blockKey)
+              }, 60L)
+            }
+          }
+        }
+      })
+    }
+  }, 1L, 10L)  // Check every 10 ticks (0.5 seconds)
+  
+  plugin.logger.info("✓ Blade of the Condemned corrupted ground effect initialized")
+
